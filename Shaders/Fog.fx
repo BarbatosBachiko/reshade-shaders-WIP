@@ -6,8 +6,11 @@
 
    Author: Barbatos Bachiko
    License: MIT
-   Purpose: Ideal for adding atmospheric depth to scenes, simulating weather conditions, or enhancing visual aesthetics.
-            
+
+   Ideas for future improvement:
+   * use the average color of the scene of the fog color
+   * add an otpion for "radial fog" (instead of a line moving with the view, the radial fog is circular and always seems at the same distance for the player)
+    
    Features:
    - Configurable fog intensity, start, and end distances
    - Supports small depth ranges for tightly packed depth buffers
