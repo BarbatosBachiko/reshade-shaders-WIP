@@ -13,6 +13,9 @@
     (*) Feature (+) Improvement	(x) Bugfix (-) Information (!) Compatibility
 */
 
+#include "ReShade.fxh"
+#include "ReShadeUI.fxh"
+
 /*---------------.
 | :: Settings :: |
 '---------------*/
