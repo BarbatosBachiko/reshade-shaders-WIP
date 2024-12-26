@@ -67,7 +67,7 @@ uniform bool useNormals
         ui_label = "Use Normals";
         ui_tooltip = "Toggle whether the shader uses normal textures for reflections.";
     >
-    = false;
+    = true;
 
 uniform float fDepthMultiplier
     <
