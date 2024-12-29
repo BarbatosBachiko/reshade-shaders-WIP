@@ -32,7 +32,7 @@ namespace XT_SSR
         ui_category = "Settings";
         ui_type = "combo";
         ui_label = "View Mode";
-        ui_tooltip = "Select the view mode for RMGI";
+        ui_tooltip = "Select the view mode";
         ui_items = 
     "Normal\0" 
     "Reflection Debug\0"
