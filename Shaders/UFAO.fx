@@ -12,7 +12,8 @@
     History:
     (*) Feature (+) Improvement	(x) Bugfix (-) Information (!) Compatibility
 
-    Version 1.0
+    Version 1.1
+    + yet
 
 */
 
@@ -47,6 +48,24 @@ uniform float radius
         ui_min = 0.003; ui_max = 0.01; ui_step = 0.001;
     > = 0.005;
 
+uniform float fDepthMultiplier <
+        ui_type = "slider";
+        ui_category = "Depth";
+        ui_label = "Depth multiplier";
+        ui_min = 0.001; ui_max = 20.00;
+        ui_step = 0.001;
+    > = 1.0;
+
+uniform float depthThreshold
+<
+    ui_type = "slider";
+    ui_category = "Depth";
+    ui_label = "Depth Threshold (Sky)";
+    ui_tooltip = "Set the depth threshold to ignore the sky during occlusion.";
+    ui_min = 0.9; ui_max = 1.0; ui_step = 0.01;
+>
+= 0.95;
+
 /*---------------.
 | :: Textures :: |
 '---------------*/
@@ -54,7 +73,7 @@ namespace UFAO
 {
     texture ColorTex : COLOR;
     texture DepthTex : DEPTH;
-
+    texture NormalTex : NORMAL;
     sampler ColorSampler
     {
         Texture = ColorTex;
@@ -63,12 +82,27 @@ namespace UFAO
     {
         Texture = DepthTex;
     };
-
+    sampler NormalSampler
+    {
+        Texture = NormalTex;
+    };
+    
     /*----------------.
     | :: Functions :: |
     '----------------*/
 
-    // Fixed direction vectors for sampling 
+    float GetLinearDepth(float2 coords)
+    {
+        return ReShade::GetLinearizedDepth(coords) * fDepthMultiplier;
+    }
+    
+    float3 GetNormal(float2 coords)
+    {
+        float4 normalTex = tex2D(NormalSampler, coords);
+        float3 normal = normalize(normalTex.xyz * 2.0 - 1.0);
+        return normal;
+    }
+    
     float3 FixedDirection(int sampleIndex)
     {
         if (sampleIndex == 0)
@@ -80,13 +114,19 @@ namespace UFAO
         return float3(0.0, -1.0, 0.0); // Down
     }
 
-    // Computes the SSAO 
     float4 SSAO(float2 texcoord)
     {
         float4 originalColor = tex2D(ColorSampler, texcoord);
-        float depthValue = tex2D(DepthSampler, texcoord).r;
+        float depthValue = GetLinearDepth(texcoord);
+
+        if (depthValue > depthThreshold)
+        {
+            return originalColor;
+        }
+
         float occlusion = 0.0;
         float2 sampleCoords[4];
+        float3 normal = GetNormal(texcoord);
         
         for (int i = 0; i < 4; i++)
         {
@@ -95,13 +135,14 @@ namespace UFAO
 
         for (int i = 0; i < 4; i++)
         {
-            float sampleDepth = tex2D(DepthSampler, sampleCoords[i]).r;
-            occlusion += (sampleDepth < depthValue) ? 1.0 : 0.0;
+            float sampleDepth = GetLinearDepth(sampleCoords[i]);
+            float3 sampleNormal = GetNormal(sampleCoords[i]);
+            float weight = dot(normal, sampleNormal);
+            occlusion += ((sampleDepth < depthValue) && (weight > 0.5)) ? 1.0 : 0.0;
         }
 
         occlusion *= intensity;
 
-        // View Modes
         if (viewMode == 0)
         {
             return originalColor * (1.0 - occlusion); // Normal View
