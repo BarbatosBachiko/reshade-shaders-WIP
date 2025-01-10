@@ -203,7 +203,7 @@ namespace XT_SSR
         float4 color1 = ProcessCamera(texcoord, cameraPos1, reflectionPlaneNormal, reflectionHeight);
         float4 color2 = ProcessCamera(texcoord, cameraPos2, reflectionPlaneNormal, reflectionHeight);
         float4 color3 = ProcessCamera(texcoord, cameraPos3, reflectionPlaneNormal, reflectionHeight);
-        return (color1 + color2 + color2 + color3) / 3.0;
+        return (color1 + color2 + color3) / 3.0;
     }
     float4 XTSSRPS(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
     {
