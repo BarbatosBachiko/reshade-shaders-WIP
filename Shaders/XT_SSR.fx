@@ -118,7 +118,7 @@ namespace XT_SSR
     >
     = 2;
     uniform float3 cameraPos1 = float3(1.5, 0.0, -1.0);
-    uniform float3 cameraPos2 = float3(1.0, 0.0, 1.0);
+    uniform float3 cameraPos2 = float3(1.0, 0.0, 0.7);
     uniform float3 cameraPos3 = float3(-1.5, 10.0, 6.0);
     /*---------------.
     | :: Textures :: |
