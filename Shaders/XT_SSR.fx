@@ -7,7 +7,7 @@
   >  <  | ||___\__ \__ \   /  !!Not Working on DX9!!
  /_/\_\ |_|    |___/___/_|_\ 
                              
-    Version 0.6
+    Version 0.6.1
     Author: Barbatos Bachiko
     License: MIT
 
@@ -15,7 +15,7 @@
      
     History:
     (*) Feature (+) Improvement    (x) Bugfix (-) Information (!) Compatibility
-    Version 0.6: improve camera
+    Version 0.6.1: improve camera
 */
 
 #include "ReShade.fxh"
@@ -28,19 +28,18 @@ namespace XT_SSR
     '---------------*/
     uniform int viewMode
     <
-        ui_category = "Settings";
+        ui_category = "Reflection";
         ui_type = "combo";
         ui_label = "View Mode";
         ui_tooltip = "Select the view mode";
         ui_items = 
     "Normal\0" 
-    "Reflection Debug\0"
-    "Depth Debug\0";
+    "Reflection Debug\0";
     >
     = 0;
     uniform float reflectionIntensity
     <
-        ui_category = "Settings";
+        ui_category = "Reflection";
         ui_type = "slider";
         ui_label = "Reflection Intensity";
         ui_tooltip = "Adjust the intensity.";
@@ -50,9 +49,10 @@ namespace XT_SSR
         ui_reset = 0.1;
     >
     = 0.05;
+    
     uniform float sampleRadius
     <
-        ui_category = "Settings";
+        ui_category = "Reflection";
         ui_type = "slider";
         ui_label = "Sample Radius";
         ui_tooltip = "Adjust the radius of the samples.";
@@ -61,7 +61,7 @@ namespace XT_SSR
     = 0.100;
     uniform int sampleSteps
     <
-        ui_category = "Settings";
+        ui_category = "Reflection";
         ui_type = "slider";
         ui_label = "Sample Steps";
         ui_tooltip = "Adjust the number of steps.";
@@ -105,15 +105,18 @@ namespace XT_SSR
     >
     = 0.03;
     uniform int cameraMode
-<
-    ui_category = "Camera";
-    ui_type = "combo";
-    ui_label = "Camera Mode";
-    ui_tooltip = "Select the camera mode";
-    ui_items = 
-    "Left + Center + Right\0";
->
-= 0; 
+    <
+        ui_category = "Camera";
+        ui_type = "combo";
+        ui_label = "Camera Mode";
+        ui_tooltip = "Select the camera mode";
+        ui_items = 
+        "Combine All\0"
+        "Left (Camera 1)\0"
+        "Floor (Camera 2)\0"
+        "Right (Camera 3)\0";
+    >
+    = 2;
     uniform float3 cameraPos1 = float3(1.5, 0.0, -1.0);
     uniform float3 cameraPos2 = float3(1.0, 0.0, 1.0);
     uniform float3 cameraPos3 = float3(-1.5, 10.0, 6.0);
@@ -123,10 +126,6 @@ namespace XT_SSR
     texture2D BackBufferTex : COLOR;
     sampler2D BackBuffer
     {
-        MinFilter = Linear;
-        MagFilter = Linear;
-        AddressU = Clamp;
-        AddressV = Clamp;
         Texture = BackBufferTex;
     };
     /*----------------.
@@ -194,33 +193,47 @@ namespace XT_SSR
         indirectColor *= reflectionIntensity;;
         return float4(originalColor.rgb + indirectColor, 1.0);
     }
-    float4 ProcessCamera(float2 texcoord, float3 cameraPos, float3 reflectionPlaneNormal, float reflectionHeight)
+    float4 ProcessCamera(float2 texcoord, float3 cameraPos)
     {
+        float3 reflectionPlaneNormal = float3(0.0, 1.0, 0.0); 
+        float reflectionHeight = 0.0; 
         return XTSSR(texcoord, cameraPos, reflectionPlaneNormal, reflectionHeight, sampleRadius);
     }
-    float4 CombineCameras(float2 texcoord, float3 reflectionPlaneNormal, float reflectionHeight)
+
+    float4 CombineCameras(float2 texcoord)
     {
-        float4 color1 = ProcessCamera(texcoord, cameraPos1, reflectionPlaneNormal, reflectionHeight);
-        float4 color2 = ProcessCamera(texcoord, cameraPos2, reflectionPlaneNormal, reflectionHeight);
-        float4 color3 = ProcessCamera(texcoord, cameraPos3, reflectionPlaneNormal, reflectionHeight);
+        float4 color1 = ProcessCamera(texcoord, cameraPos1);
+        float4 color2 = ProcessCamera(texcoord, cameraPos2);
+        float4 color3 = ProcessCamera(texcoord, cameraPos3);
+
         return (color1 + color2 + color3) / 3.0;
     }
     float4 XTSSRPS(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
     {
-        float3 reflectionPlaneNormal = float3(0.0, 1.0, 0.0);
-        float reflectionHeight = 0.0;
-
         float4 finalColor;
 
         if (cameraMode == 0)
         {
-            finalColor = CombineCameras(texcoord, reflectionPlaneNormal, reflectionHeight);
+            finalColor = CombineCameras(texcoord);
         }
-        if (viewMode == 1)
+        else if (cameraMode == 1) 
+        {
+            finalColor = ProcessCamera(texcoord, cameraPos1);
+        }
+        else if (cameraMode == 2)
+        {
+            finalColor = ProcessCamera(texcoord, cameraPos2);
+        }
+        else if (cameraMode == 3) 
+        {
+            finalColor = ProcessCamera(texcoord, cameraPos3);
+        }
+
+        if (viewMode == 1) 
         {
             return float4(finalColor.rgb * reflectionIntensity, 1.0);
         }
-        else
+        else 
         {
             return float4(finalColor.rgb, 1.0);
         }
