@@ -20,7 +20,7 @@
 namespace UFAO
 {
 #ifndef RENDER_SCALE
-#define RENDER_SCALE 0.333
+#define RENDER_SCALE 1.0
 #endif
 #define INPUT_WIDTH BUFFER_WIDTH
 #define INPUT_HEIGHT BUFFER_HEIGHT
