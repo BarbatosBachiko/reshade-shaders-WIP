@@ -13,6 +13,7 @@
     History:
     (*) Feature (+) Improvement	(x) Bugfix (-) Information (!) Compatibility
 
+    Need to: Fix block artifacts
     Version 1.0
     * Blur
     + Normal Fix for Angle Modes
