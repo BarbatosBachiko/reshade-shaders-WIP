@@ -4,7 +4,7 @@
 
     NeoGI
 
-    Version 1.1
+    Version 1.1.1
     Author: Barbatos Bachiko
     License: MIT
 
@@ -14,9 +14,8 @@
     (*) Feature (+) Improvement	(x) Bugfix (-) Information (!) Compatibility
 
     Need to: Fix block artifacts
-    Version 1.1
-    + More performance and same quality (Ray Marching) +20%
-    - Add Depth Smooth Epsilon
+    Version 1.1.1
+    + More performance (PS_GI)
      
 */
 #include "ReShade.fxh"
@@ -323,67 +322,62 @@ namespace NEOSPACEG
         return giAccum;
     }
 
-
-    // From NEOSSAO.fx and adapted
     float4 PS_GI(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
+{
+    float depthValue = GetLinearDepth(uv);
+    float3 normal = GetScreenSpaceNormal(uv);
+    float3 giColor = float3(0.0, 0.0, 0.0);
+
+    int sampleCount = (QualityLevel == 0) ? 4 : (QualityLevel == 1) ? 8 : 16;
+    float invSampleCount = 1.0 / sampleCount;
+    float stepPhi = 6.28318530718 / sampleCount;
+
+    if (AngleMode == 3) // Bidirectional
     {
-        float depthValue = GetLinearDepth(uv);
-        float3 normal = GetScreenSpaceNormal(uv);
-        float3 giColor = float3(0.0, 0.0, 0.0);
-        int sampleCount = QualityLevel == 0 ? 8 : QualityLevel == 1 ? 16 : 32;
-
-        if (AngleMode == 3) // Bidirectional
+        float3 tangent = normalize(cross(normal, float3(0.0, 0.0, 1.0)));
+        float3 bitangent = cross(normal, tangent);
+        
+        for (int i = 0; i < sampleCount; i++)
         {
-            int halfCount = sampleCount / 2;
-            float stepPhi = 6.28318530718 / float(halfCount);
-            for (int i = 0; i < halfCount; i++)
-            {
-                float phi = (i + 0.5) * stepPhi;
-                float3 sampleDir1 = float3(cos(phi), sin(phi), 0.0);
-                float3 sampleDir2 = -sampleDir1;
-                giColor += RayMarching(uv, sampleDir1 * SampleRadius, normal);
-                giColor += RayMarching(uv, sampleDir2 * SampleRadius, normal);
-            }
-            if (sampleCount % 2 != 0)
-            {
-                float3 sampleDir = float3(1.0, 0.0, 0.0);
-                giColor += RayMarching(uv, sampleDir * SampleRadius, normal);
-            }
+            float phi = (i + 0.5) * stepPhi;
+            float3 sampleDir = tangent * cos(phi) + bitangent * sin(phi);
+            giColor += RayMarching(uv, sampleDir * SampleRadius, normal);
         }
-        else
+    }
+    else
+    {
+        for (int i = 0; i < sampleCount; i++)
         {
-            for (int i = 0; i < sampleCount; i++)
+            float phi = (i + 0.5) * stepPhi;
+            float3 sampleDir;
+
+            if (AngleMode == 0) // Horizon Only
             {
-                float3 sampleDir;
-                if (AngleMode == 0) // Horizon Only
-                {
-                    float stepPhi = 6.28318530718 / float(sampleCount);
-                    float phi = (i + 0.5) * stepPhi;
-                    sampleDir = float3(cos(phi), sin(phi), 0.0);
-                }
-                else if (AngleMode == 1) // Vertical Only
-                {
-                    sampleDir = (i % 2 == 0) ? float3(0.0, 1.0, 0.0) : float3(0.0, -1.0, 0.0);
-                }
-                else if (AngleMode == 2) // Unilateral
-                {
-                    float stepPhi = 3.14159265359 / float(sampleCount);
-                    float phi = (i + 0.5) * stepPhi;
-                    sampleDir = float3(cos(phi), sin(phi), 0.0);
-                }
-                giColor += RayMarching(uv, sampleDir * SampleRadius, normal);
+                sampleDir = float3(cos(phi), sin(phi), 0.0);
             }
+            else if (AngleMode == 1) // Vertical Only
+            {
+                sampleDir = (i % 2 == 0) ? float3(0.0, 1.0, 0.0) : float3(0.0, -1.0, 0.0);
+            }
+            else if (AngleMode == 2) // Unilateral
+                {
+            float stepPhi = 3.14159265359 / float(sampleCount);
+            float phi = (i + 0.5) * stepPhi;
+            sampleDir = float3(cos(phi), sin(phi), 0.0);
+            }
+
+            giColor += RayMarching(uv, sampleDir * SampleRadius, normal);
         }
-
-        giColor /= sampleCount;
-        giColor *= Intensity;
-
-        float fade = saturate((FadeEnd - depthValue) / (FadeEnd - FadeStart));
-        giColor *= fade;
-
-        return float4(giColor, 1.0);
     }
 
+    giColor *= invSampleCount * Intensity;
+
+    float fadeFactor = max(FadeEnd - FadeStart, 0.001);
+    float fade = saturate((FadeEnd - depthValue) / fadeFactor);
+    giColor *= fade;
+
+    return float4(giColor, 1.0);
+    }
 
     //Normals
     float4 PS_Normals(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
@@ -428,7 +422,6 @@ namespace NEOSPACEG
         }
         return originalColor;
     }
-
 
     // Downsampling Function - 0
     float4 Downsample0(float4 position : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
