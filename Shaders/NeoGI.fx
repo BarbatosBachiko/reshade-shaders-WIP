@@ -3,10 +3,20 @@
 '-------------------/
 
     NeoGI
-    Autor: Barbatos Bachiko
+
+    Version 1.0
+    Author: Barbatos Bachiko
     License: MIT
 
     About: Simple Indirect lighting using ray marching.
+
+    History:
+    (*) Feature (+) Improvement	(x) Bugfix (-) Information (!) Compatibility
+
+    Version 1.0
+    * Blur
+    + Normal Fix for Angle Modes
+
 */
 #include "ReShade.fxh"
 namespace NEOSPACEG
@@ -30,7 +40,7 @@ namespace NEOSPACEG
         ui_type = "combo";
         ui_category = "Geral";
         ui_label = "View Mode";
-        ui_tooltip = "Select the view mode for GI";
+        ui_tooltip = "Select the view mode";
         ui_items = "Composite\0GI Debug\0Normal Debug\0Depth Debug\0";
     >
     = 0;
@@ -54,6 +64,16 @@ namespace NEOSPACEG
         ui_min = 0.0; ui_max = 1.0; ui_step = 0.05;
     >
     = 0.2; 
+
+    uniform float Saturation
+    <
+        ui_type = "slider";
+        ui_category = "Geral";
+        ui_label = "Saturation";
+        ui_tooltip = "Adjust GI saturation";
+        ui_min = 0.0; ui_max = 2.0; ui_step = 0.05;
+    >
+    = 1.0;
 
     uniform float SampleRadius
     <
@@ -121,7 +141,7 @@ namespace NEOSPACEG
         ui_category = "Advanced";
         ui_label = "Blend Mode";
         ui_tooltip = "Select the blend mode for GI";
-        ui_items = "Additive\0Multiply\0Alpha Blend\0";
+        ui_items = "Additive\0B\0Alpha Blend\0";
     >
     = 2;
     
@@ -149,6 +169,15 @@ namespace NEOSPACEG
         ui_type = "color"; 
     > = float3(1.0, 1.0, 1.0);
     
+    uniform float Blur_Amount <
+	    ui_type = "drag";
+	    ui_min = 0.0; ui_max = 8.0;
+        ui_step = 0.1;
+        ui_label = "Bluring amount";
+	    ui_tooltip = "Less noise but less details";
+        ui_category = "Filtering";
+    > = 0.5;
+    
     /*---------------.
     | :: Textures :: |
     '---------------*/
@@ -158,6 +187,7 @@ namespace NEOSPACEG
         Width = RES_WIDTH;
         Height = RES_HEIGHT;
         Format = RGBA8;
+        MipLevels = 1;
     };
 
     texture2D NormalTex
@@ -165,8 +195,33 @@ namespace NEOSPACEG
         Width = BUFFER_WIDTH;
         Height = BUFFER_HEIGHT;
         Format = RGBA16F;
+        MipLevels = 1;
     };
 
+    texture fBlurTexture0
+    {
+        Width = RES_WIDTH;
+        Height = RES_HEIGHT;
+        Format = RGBA8;
+        MipLevels = 1;
+    };
+    
+    texture fBlurTexture1
+    {
+        Width = RES_WIDTH;
+        Height = RES_HEIGHT;
+        Format = RGBA8;
+        MipLevels = 1;
+    };
+    
+    texture fBlurTexture2
+    {
+        Width = RES_WIDTH;
+        Height = RES_HEIGHT;
+        Format = RGBA8;
+        MipLevels = 1;
+    };
+    
     sampler2D sGI
     {
         Texture = GITex;
@@ -175,6 +230,24 @@ namespace NEOSPACEG
     sampler2D sNormal
     {
         Texture = NormalTex;
+    };
+
+
+    sampler blurTexture0
+    {
+        Texture = fBlurTexture0;
+    };
+    
+
+    sampler blurTexture1
+    {
+        Texture = fBlurTexture1;
+    };
+
+  
+    sampler blurTexture2
+    {
+        Texture = fBlurTexture2;
     };
 
     /*----------------.
@@ -236,7 +309,7 @@ namespace NEOSPACEG
     float4 PS_GI(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
     {
         float depthValue = GetLinearDepth(uv);
-        float3 normal = GetScreenSpaceNormal(uv);
+        float3 normal = GetScreenSpaceNormal(uv); 
         float3 giColor = float3(0.0, 0.0, 0.0);
         int sampleCount = QualityLevel == 0 ? 8 : QualityLevel == 1 ? 16 : 32;
 
@@ -248,13 +321,13 @@ namespace NEOSPACEG
                 float phi = (i + 0.5) * 6.28318530718 / halfCount;
                 float3 sampleDir1 = float3(cos(phi), sin(phi), 0.0);
                 float3 sampleDir2 = -sampleDir1;
-                giColor += RayMarching(uv, sampleDir1 * SampleRadius, normal);
-                giColor += RayMarching(uv, sampleDir2 * SampleRadius, normal);
+                giColor += RayMarching(uv, sampleDir1 * SampleRadius, normal); 
+                giColor += RayMarching(uv, sampleDir2 * SampleRadius, normal); 
             }
             if (sampleCount % 2 != 0)
             {
                 float3 sampleDir = float3(1.0, 0.0, 0.0);
-                giColor += RayMarching(uv, sampleDir * SampleRadius, normal);
+                giColor += RayMarching(uv, sampleDir * SampleRadius, normal); 
             }
         }
         else
@@ -300,7 +373,10 @@ namespace NEOSPACEG
     float4 PS_GI_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
     {
         float4 originalColor = tex2D(ReShade::BackBuffer, uv);
-        float3 giColor = tex2D(sGI, uv).rgb;
+        float3 giColor = tex2D(blurTexture2, uv).rgb;
+        float greyValue = dot(giColor, float3(0.299, 0.587, 0.114));
+        float3 grey = float3(greyValue, greyValue, greyValue);
+        giColor = lerp(grey, giColor, Saturation);
 
         switch (ViewMode)
         {
@@ -310,27 +386,61 @@ namespace NEOSPACEG
                     case 0: // Additive
                         return float4(originalColor.rgb + giColor, originalColor.a);
 
-                    case 1: // Multiply
-                        return float4(originalColor.rgb * (1.0 + giColor), originalColor.a);
+                    case 1: // B
+                        return float4(1.0 - (1.0 - originalColor.rgb) * (1.0 - giColor), originalColor.a);
 
                     case 2: // Alpha Blend
                         float blendFactor = saturate(giColor.r);
                         return float4(lerp(originalColor.rgb, giColor, blendFactor), originalColor.a);
                 }
                 break;
-
             case 1: // GI Debug
                 return float4(giColor, 1.0);
-
             case 2: // Normal Debug
                 float3 normal = GetScreenSpaceNormal(uv);
                 return float4(normal * 0.5 + 0.5, 1.0);
-
             case 3: // Depth Debug
                 float depth = GetLinearDepth(uv);
                 return float4(depth, depth, depth, 1.0);
         }
         return originalColor;
+    }
+
+
+    // Downsampling Function - 0
+    float4 Downsample0(float4 position : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
+    {
+        float2 pixelSize = ReShade::PixelSize * Blur_Amount;
+        float4 color = tex2D(sGI, texcoord + float2(-pixelSize.x, -pixelSize.y));
+        color += tex2D(sGI, texcoord + float2(pixelSize.x, -pixelSize.y));
+        color += tex2D(sGI, texcoord + float2(-pixelSize.x, pixelSize.y));
+        color += tex2D(sGI, texcoord + float2(pixelSize.x, pixelSize.y));
+        color *= 0.25;
+        return color;
+    }
+
+    // Downsampling Function - 1
+    float4 Downsample1(float4 position : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
+    {
+        float2 pixelSize = ReShade::PixelSize * 2 * Blur_Amount;
+        float4 color = tex2D(blurTexture0, texcoord + float2(-pixelSize.x, -pixelSize.y));
+        color += tex2D(blurTexture0, texcoord + float2(pixelSize.x, -pixelSize.y));
+        color += tex2D(blurTexture0, texcoord + float2(-pixelSize.x, pixelSize.y));
+        color += tex2D(blurTexture0, texcoord + float2(pixelSize.x, pixelSize.y));
+        color *= 0.25;
+        return color;
+    }
+
+    // Downsampling Function - 2
+    float4 Downsample2(float4 position : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
+    {
+        float2 pixelSize = ReShade::PixelSize * 4 * Blur_Amount;
+        float4 color = tex2D(blurTexture1, texcoord + float2(-pixelSize.x, -pixelSize.y));
+        color += tex2D(blurTexture1, texcoord + float2(pixelSize.x, -pixelSize.y));
+        color += tex2D(blurTexture1, texcoord + float2(-pixelSize.x, pixelSize.y));
+        color += tex2D(blurTexture1, texcoord + float2(pixelSize.x, pixelSize.y));
+        color *= 0.25;
+        return color;
     }
 
     // Techniques
@@ -347,6 +457,26 @@ namespace NEOSPACEG
             VertexShader = PostProcessVS;
             PixelShader = PS_GI;
             RenderTarget = GITex;
+        }
+        pass
+        {
+            VertexShader = PostProcessVS;
+            PixelShader = Downsample0;
+            RenderTarget0 = fBlurTexture0;
+        }
+
+        pass
+        {
+            VertexShader = PostProcessVS;
+            PixelShader = Downsample1;
+            RenderTarget0 = fBlurTexture1;
+        }
+
+        pass
+        {
+            VertexShader = PostProcessVS;
+            PixelShader = Downsample2;
+            RenderTarget0 = fBlurTexture2;
         }
         pass
         {
