@@ -4,7 +4,7 @@
 
     NeoGI
 
-    Version 1.0
+    Version 1.1
     Author: Barbatos Bachiko
     License: MIT
 
@@ -14,10 +14,10 @@
     (*) Feature (+) Improvement	(x) Bugfix (-) Information (!) Compatibility
 
     Need to: Fix block artifacts
-    Version 1.0
-    * Blur
-    + Normal Fix for Angle Modes
-
+    Version 1.1
+    + More performance and same quality (Ray Marching) +20%
+    - Add Depth Smooth Epsilon
+     
 */
 #include "ReShade.fxh"
 namespace NEOSPACEG
@@ -84,7 +84,7 @@ namespace NEOSPACEG
         ui_tooltip = "Adjust the radius of the samples";
         ui_min = 0.001; ui_max = 5.0; ui_step = 0.001;
     >
-    = 1.0; 
+    = 0.5; 
 
     uniform float MaxRayDistance
     <
@@ -104,7 +104,7 @@ namespace NEOSPACEG
         ui_tooltip = "Adjust the ray scale";
         ui_min = 0.01; ui_max = 1.0; ui_step = 0.01;
     >
-    = 0.08;
+    = 0.05;
 
     uniform float FadeStart
     <
@@ -134,8 +134,17 @@ namespace NEOSPACEG
         ui_tooltip = "Adjust the depth multiplier";
         ui_min = 0.1; ui_max = 5.0; ui_step = 0.1;
     >
-    = 0.5;
+    = 1.0;
     
+    uniform float DepthSmoothEpsilon
+    <
+    ui_type = "slider";
+    ui_category = "Depth";
+    ui_label = "Depth Smooth Epsilon";
+    ui_tooltip = "Controls the smoothing of depth comparison";
+    ui_min = 0.0001; ui_max = 0.01; ui_step = 0.0001;
+    > = 0.0001;
+
     uniform int BlendMode
     <
         ui_type = "combo";
@@ -151,7 +160,6 @@ namespace NEOSPACEG
         ui_category = "Advanced";
         ui_type = "combo";
         ui_label = "Angle Mode";
-        ui_tooltip = "Horizon Only, Vertical Only, Unilateral ou Bidirectional";
         ui_items = "Horizon Only\0Vertical Only\0Unilateral\0Bidirectional\0";
     >
     = 3;
@@ -177,8 +185,8 @@ namespace NEOSPACEG
         ui_label = "Bluring amount";
 	    ui_tooltip = "Less noise but less details";
         ui_category = "Filtering";
-    > = 0.5;
-    
+    > = 0.0;
+ 
     /*---------------.
     | :: Textures :: |
     '---------------*/
@@ -188,7 +196,6 @@ namespace NEOSPACEG
         Width = RES_WIDTH;
         Height = RES_HEIGHT;
         Format = RGBA8;
-        MipLevels = 1;
     };
 
     texture2D NormalTex
@@ -196,7 +203,6 @@ namespace NEOSPACEG
         Width = BUFFER_WIDTH;
         Height = BUFFER_HEIGHT;
         Format = RGBA16F;
-        MipLevels = 1;
     };
 
     texture fBlurTexture0
@@ -204,7 +210,6 @@ namespace NEOSPACEG
         Width = RES_WIDTH;
         Height = RES_HEIGHT;
         Format = RGBA8;
-        MipLevels = 1;
     };
     
     texture fBlurTexture1
@@ -212,7 +217,6 @@ namespace NEOSPACEG
         Width = RES_WIDTH;
         Height = RES_HEIGHT;
         Format = RGBA8;
-        MipLevels = 1;
     };
     
     texture fBlurTexture2
@@ -220,7 +224,6 @@ namespace NEOSPACEG
         Width = RES_WIDTH;
         Height = RES_HEIGHT;
         Format = RGBA8;
-        MipLevels = 1;
     };
     
     sampler2D sGI
@@ -278,57 +281,73 @@ namespace NEOSPACEG
     // Ray Marching
     float3 RayMarching(float2 texcoord, float3 rayDir, float3 normal)
     {
-        float3 giAccum = float3(0.0, 0.0, 0.0);
+        float3 giAccum = 0.0;
         float depthValue = GetLinearDepth(texcoord);
         float stepSize = ReShade::PixelSize.x / RayScale;
         int numSteps = max(int(MaxRayDistance / stepSize), 2);
+        float invNumSteps = rcp(float(numSteps - 1));
 
         float3 lightDir = normalize(LightDirection);
+        float3 lightColor = LightColor;
+        float baseLambertian = max(dot(normal, lightDir), 0.0);
 
+        bool hitDetected = false;
+
+    [loop]
         for (int i = 0; i < numSteps; i++)
         {
-            float t = float(i) / float(numSteps - 1);
-            float sampleDistance = pow(t, 2.0) * MaxRayDistance;
-            float2 sampleCoord = clamp(texcoord + rayDir.xy * sampleDistance, 0.0, 1.0);
+            float t = float(i) * invNumSteps;
+            float sampleDistance = mad(t, t * MaxRayDistance, 0.0);
+            float2 sampleCoord = mad(rayDir.xy, sampleDistance, texcoord);
+        
+            if (any(sampleCoord < 0.0) || any(sampleCoord > 1.0))
+                break;
+
             float sampleDepth = GetLinearDepth(sampleCoord);
+            float depthDiff = depthValue - sampleDepth;
+            float hitFactor = saturate(depthDiff * rcp(DepthSmoothEpsilon + 1e-6));
 
-            if (sampleDepth < depthValue)
+            if (hitFactor > 0.01)
             {
-                float weight = 1.0 - (sampleDistance / MaxRayDistance);
-                float3 sampleColor = tex2D(ReShade::BackBuffer, sampleCoord).rgb;
+                float weight = 1.0;
+                float4 sampleData = tex2Dlod(ReShade::BackBuffer, float4(sampleCoord, 0, 0));
+                float3 sampleColor = sampleData.rgb;
                 float3 sampleNormal = GetScreenSpaceNormal(sampleCoord);
-
                 float lambertian = max(dot(sampleNormal, lightDir), 0.0);
+                giAccum = mad(sampleColor * weight * lambertian * lightColor, hitFactor, giAccum);
             
-                giAccum += sampleColor * weight * lambertian * LightColor;
+                if (hitFactor < 0.001)
+                    break;
             }
         }
         return giAccum;
     }
 
+
     // From NEOSSAO.fx and adapted
     float4 PS_GI(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
     {
         float depthValue = GetLinearDepth(uv);
-        float3 normal = GetScreenSpaceNormal(uv); 
+        float3 normal = GetScreenSpaceNormal(uv);
         float3 giColor = float3(0.0, 0.0, 0.0);
         int sampleCount = QualityLevel == 0 ? 8 : QualityLevel == 1 ? 16 : 32;
 
         if (AngleMode == 3) // Bidirectional
         {
             int halfCount = sampleCount / 2;
+            float stepPhi = 6.28318530718 / float(halfCount);
             for (int i = 0; i < halfCount; i++)
             {
-                float phi = (i + 0.5) * 6.28318530718 / halfCount;
+                float phi = (i + 0.5) * stepPhi;
                 float3 sampleDir1 = float3(cos(phi), sin(phi), 0.0);
                 float3 sampleDir2 = -sampleDir1;
-                giColor += RayMarching(uv, sampleDir1 * SampleRadius, normal); 
-                giColor += RayMarching(uv, sampleDir2 * SampleRadius, normal); 
+                giColor += RayMarching(uv, sampleDir1 * SampleRadius, normal);
+                giColor += RayMarching(uv, sampleDir2 * SampleRadius, normal);
             }
             if (sampleCount % 2 != 0)
             {
                 float3 sampleDir = float3(1.0, 0.0, 0.0);
-                giColor += RayMarching(uv, sampleDir * SampleRadius, normal); 
+                giColor += RayMarching(uv, sampleDir * SampleRadius, normal);
             }
         }
         else
@@ -338,7 +357,8 @@ namespace NEOSPACEG
                 float3 sampleDir;
                 if (AngleMode == 0) // Horizon Only
                 {
-                    float phi = (i + 0.5) * 6.28318530718 / sampleCount;
+                    float stepPhi = 6.28318530718 / float(sampleCount);
+                    float phi = (i + 0.5) * stepPhi;
                     sampleDir = float3(cos(phi), sin(phi), 0.0);
                 }
                 else if (AngleMode == 1) // Vertical Only
@@ -347,7 +367,8 @@ namespace NEOSPACEG
                 }
                 else if (AngleMode == 2) // Unilateral
                 {
-                    float phi = (i + 0.5) * 3.14159265359 / sampleCount;
+                    float stepPhi = 3.14159265359 / float(sampleCount);
+                    float phi = (i + 0.5) * stepPhi;
                     sampleDir = float3(cos(phi), sin(phi), 0.0);
                 }
                 giColor += RayMarching(uv, sampleDir * SampleRadius, normal);
@@ -362,6 +383,7 @@ namespace NEOSPACEG
 
         return float4(giColor, 1.0);
     }
+
 
     //Normals
     float4 PS_Normals(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
