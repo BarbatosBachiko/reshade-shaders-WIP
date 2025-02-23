@@ -4,7 +4,7 @@
 
     NeoGI
 
-    Version 1.1.5
+    Version 1.2
     Author: Barbatos Bachiko
     License: MIT
 
@@ -13,8 +13,8 @@
     History:
     (*) Feature (+) Improvement	(x) Bugfix (-) Information (!) Compatibility
 
-    Version 1.1.5
-    + code organization
+    Version 1.2
+    + Perfomance
      
 */
 #include "ReShade.fxh"
@@ -63,9 +63,9 @@ namespace NEOSPACEG
         ui_category = "Geral";
         ui_label = "Intensity";
         ui_tooltip = "Adjust the intensity";
-        ui_min = 0.0; ui_max = 1.0; ui_step = 0.05;
+        ui_min = 0.5; ui_max = 2.0; ui_step = 0.01;
     >
-    = 0.2; 
+    = 1.0; 
 
     uniform float Saturation
     <
@@ -75,7 +75,7 @@ namespace NEOSPACEG
         ui_tooltip = "Adjust GI saturation";
         ui_min = 0.0; ui_max = 2.0; ui_step = 0.05;
     >
-    = 1.0;
+    = 1.2;
 
     uniform float SampleRadius
     <
@@ -95,7 +95,7 @@ namespace NEOSPACEG
         ui_tooltip = "Maximum distance for ray marching";
         ui_min = 0.0; ui_max = 1.0; ui_step = 0.001;
     >
-    = 0.100;
+    = 0.035;
     
     uniform float RayScale
     <
@@ -152,9 +152,18 @@ namespace NEOSPACEG
         ui_category = "Advanced";
         ui_label = "Blend Mode";
         ui_tooltip = "Select the blend mode for GI";
-        ui_items = "Additive\0B\0Alpha Blend\0";
+        ui_items = "Additive\0Multiplicative\0Alpha Blend\0";
     >
     = 2;
+    
+    uniform int colorSpace 
+        <
+        ui_category = "Advanced";
+        ui_type = "combo";
+        ui_label = "Color Space";
+        ui_items = "Linear\0";
+    >
+    = 0;
     
     uniform int AngleMode
     <
@@ -278,7 +287,23 @@ namespace NEOSPACEG
 
         return normalize(cross(vertCenter - vertNorth, vertCenter - vertEast)) * 0.5 + 0.5;
     }
-    
+
+    float3 ApplyGammaCorrection(float3 color, int colorSpace)
+    {
+        if (colorSpace == 0)
+        {
+            return color; // Linear
+        }
+        else if (colorSpace == 1)
+        {
+            return (color < 0.5) ? (color * 2.0) : (pow(color, 1.0 / 2.4)); // Custom
+        }
+        else
+        {
+            return color;
+        }
+    }
+
     // Ray Marching
     float3 RayMarching(float2 texcoord, float3 rayDir, float3 normal)
     {
@@ -294,13 +319,14 @@ namespace NEOSPACEG
 
         bool hitDetected = false;
 
-        [loop]
+    [loop]
         for (int i = 0; i < numSteps; i++)
         {
             float t = float(i) * invNumSteps;
             float sampleDistance = mad(t, t * MaxRayDistance, 0.0);
             float2 sampleCoord = mad(rayDir.xy, sampleDistance, texcoord);
-        
+            sampleCoord = clamp(sampleCoord, 0.0, 1.0);
+
             if (any(sampleCoord < 0.0) || any(sampleCoord > 1.0))
                 break;
 
@@ -313,10 +339,11 @@ namespace NEOSPACEG
                 float weight = 1.0;
                 float4 sampleData = tex2Dlod(ReShade::BackBuffer, float4(sampleCoord, 0, 0));
                 float3 sampleColor = sampleData.rgb;
+                sampleColor = ApplyGammaCorrection(sampleColor, colorSpace);
                 float3 sampleNormal = GetScreenSpaceNormal(sampleCoord);
                 float lambertian = max(dot(sampleNormal, lightDir), 0.0);
                 giAccum = mad(sampleColor * weight * lambertian * lightColor, hitFactor, giAccum);
-            
+
                 if (hitFactor < 0.001)
                     break;
             }
@@ -345,7 +372,7 @@ namespace NEOSPACEG
                 tangent = normalize(cross(normal, float3(0.0, 0.0, 1.0)));
             }
             float3 bitangent = cross(normal, tangent);
-        
+
             for (int i = 0; i < sampleCount; i++)
             {
                 float phi = (i + 0.5) * stepPhiLocal;
@@ -378,11 +405,13 @@ namespace NEOSPACEG
                 giColor += RayMarching(uv, sampleDir * SampleRadius, normal);
             }
         }
-        
+
         giColor *= invSampleCount * Intensity;
         float fadeFactor = max(FadeEnd - FadeStart, 0.001);
         float fade = saturate((FadeEnd - depthValue) / fadeFactor);
         giColor *= fade;
+        
+        giColor = ApplyGammaCorrection(giColor, colorSpace);
 
         return float4(giColor, 1.0);
     }
@@ -411,7 +440,7 @@ namespace NEOSPACEG
                     case 0: // Additive
                         return float4(originalColor.rgb + giColor, originalColor.a);
 
-                    case 1: // B
+                    case 1: // Multiplicative
                         return float4(1.0 - (1.0 - originalColor.rgb) * (1.0 - giColor), originalColor.a);
 
                     case 2: // Alpha Blend
