@@ -4,7 +4,7 @@
 
     NeoGI
 
-    Version 1.2.1
+    Version 1.2.2
     Author: Barbatos Bachiko
     License: MIT
 
@@ -13,9 +13,9 @@
     History:
     (*) Feature (+) Improvement	(x) Bugfix (-) Information (!) Compatibility
 
-    Version 1.2
-    + Perfomance
-     
+    Version 1.2.2
+    - Add jitter once again
+    + Fix "BColor" color space
 */
 #include "ReShade.fxh"
 namespace NEOSPACEG
@@ -75,7 +75,7 @@ namespace NEOSPACEG
         ui_tooltip = "Adjust GI saturation";
         ui_min = 0.0; ui_max = 2.0; ui_step = 0.05;
     >
-    = 2.0;
+    = 1.5;
 
     uniform float SampleRadius
     <
@@ -161,7 +161,7 @@ namespace NEOSPACEG
         ui_category = "Advanced";
         ui_type = "combo";
         ui_label = "Color Space";
-        ui_items = "Linear\0";
+        ui_items = "Linear\0BColor\0";
     >
     = 0;
     
@@ -197,6 +197,16 @@ namespace NEOSPACEG
         ui_category = "Filtering";
     > = 0.5;
  
+    uniform float SampleJitter
+<
+    ui_category = "Filtering";
+    ui_type = "slider";
+    ui_label = "Sample Jitter";
+    ui_tooltip = "Controls the amount of jitter in the Sample Radius";
+    ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
+>
+= 0.0;
+    
     /*---------------.
     | :: Textures :: |
     '---------------*/
@@ -296,7 +306,7 @@ namespace NEOSPACEG
         }
         else if (colorSpace == 1)
         {
-            return (color < 0.5) ? (color * 2.0) : (pow(color, 1.0 / 2.4)); // Custom
+            return (color < 0.5) ? (color * 2.0) : (exp(color* 1.0 / 2.4)); // Custom
         }
         else
         {
@@ -360,6 +370,10 @@ namespace NEOSPACEG
         float invSampleCount = 1.0 / sampleCount;
         float stepPhiLocal = (AngleMode == 2) ? (PI / sampleCount) : (TWO_PI / sampleCount);
 
+        float randomValue = frac(sin(dot(uv, float2(12.9898, 78.233))) * 43758.5453);
+        float jitterFactor = 1.0 + SampleJitter * (randomValue * 2.0 - 1.0);
+        float dynamicSampleRadius = SampleRadius * jitterFactor;
+
         if (AngleMode == 3) // Bidirectional
         {
             float3 tangent;
@@ -377,7 +391,7 @@ namespace NEOSPACEG
             {
                 float phi = (i + 0.5) * stepPhiLocal;
                 float3 sampleDir = tangent * cos(phi) + bitangent * sin(phi);
-                giColor += RayMarching(uv, sampleDir * SampleRadius, normal);
+                giColor += RayMarching(uv, sampleDir * dynamicSampleRadius, normal);
             }
         }
         else
@@ -402,7 +416,7 @@ namespace NEOSPACEG
                         break;
                 }
 
-                giColor += RayMarching(uv, sampleDir * SampleRadius, normal);
+                giColor += RayMarching(uv, sampleDir * dynamicSampleRadius, normal);
             }
         }
 
@@ -410,7 +424,7 @@ namespace NEOSPACEG
         float fadeFactor = max(FadeEnd - FadeStart, 0.001);
         float fade = saturate((FadeEnd - depthValue) / fadeFactor);
         giColor *= fade;
-        
+    
         giColor = ApplyGammaCorrection(giColor, colorSpace);
 
         return float4(giColor, 1.0);
