@@ -4,7 +4,7 @@
 
     NeoGI
 
-    Version 1.3
+    Version 1.2.1
     Author: Barbatos Bachiko
     License: MIT
 
@@ -13,12 +13,12 @@
     History:
     (*) Feature (+) Improvement	(x) Bugfix (-) Information (!) Compatibility
 
-    Version 1.3
-    * Jitter for Sample Radius
+    Version 1.2
+    + Perfomance
      
 */
 #include "ReShade.fxh"
-namespace NEOSPACEGI
+namespace NEOSPACEG
 {
     
 #define INPUT_WIDTH BUFFER_WIDTH 
@@ -75,7 +75,7 @@ namespace NEOSPACEGI
         ui_tooltip = "Adjust GI saturation";
         ui_min = 0.0; ui_max = 2.0; ui_step = 0.05;
     >
-    = 1.2;
+    = 2.0;
 
     uniform float SampleRadius
     <
@@ -85,7 +85,7 @@ namespace NEOSPACEGI
         ui_tooltip = "Adjust the radius of the samples";
         ui_min = 0.001; ui_max = 5.0; ui_step = 0.001;
     >
-    = 0.5; 
+    = 0.180; 
 
     uniform float MaxRayDistance
     <
@@ -95,7 +95,7 @@ namespace NEOSPACEGI
         ui_tooltip = "Maximum distance for ray marching";
         ui_min = 0.0; ui_max = 1.0; ui_step = 0.001;
     >
-    = 0.025;
+    = 0.035;
     
     uniform float RayScale
     <
@@ -103,9 +103,9 @@ namespace NEOSPACEGI
         ui_type = "slider";
         ui_label = "Ray Scale";
         ui_tooltip = "Adjust the ray scale";
-        ui_min = 0.0111; ui_max = 1.0; ui_step = 0.0001;
+        ui_min = 0.01; ui_max = 1.0; ui_step = 0.01;
     >
-    = 0.0500;
+    = 0.05;
 
     uniform float FadeStart
     <
@@ -135,7 +135,7 @@ namespace NEOSPACEGI
         ui_tooltip = "Adjust the depth multiplier";
         ui_min = 0.1; ui_max = 5.0; ui_step = 0.1;
     >
-    = 1.0;
+    = 0.5;
     
     uniform float DepthSmoothEpsilon
     <
@@ -154,18 +154,8 @@ namespace NEOSPACEGI
         ui_tooltip = "Select the blend mode for GI";
         ui_items = "Additive\0Multiplicative\0Alpha Blend\0";
     >
-    = 2;
+    = 1;
     
-    uniform float SampleJitter
-<
-    ui_category = "Advanced";
-    ui_type = "slider";
-    ui_label = "Sample Jitter";
-    ui_tooltip = "Controls the amount of jitter in the Sample Radius";
-    ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
->
-= 0.3;
-
     uniform int colorSpace
         <
         ui_category = "Advanced";
@@ -205,7 +195,7 @@ namespace NEOSPACEGI
         ui_label = "Bluring amount";
 	    ui_tooltip = "Less noise but less details";
         ui_category = "Filtering";
-    > = 0.2;
+    > = 0.5;
  
     /*---------------.
     | :: Textures :: |
@@ -313,7 +303,8 @@ namespace NEOSPACEGI
             return color;
         }
     }
-  // Ray Marching
+
+    // Ray Marching
     float3 RayMarching(float2 texcoord, float3 rayDir, float3 normal)
     {
         float3 giAccum = 0.0;
@@ -365,14 +356,9 @@ namespace NEOSPACEGI
         float depthValue = GetLinearDepth(uv);
         float3 normal = GetScreenSpaceNormal(uv);
         float3 giColor = float3(0.0, 0.0, 0.0);
-        
         int sampleCount = (QualityLevel == 0) ? 4 : (QualityLevel == 1) ? 8 : 16;
         float invSampleCount = 1.0 / sampleCount;
         float stepPhiLocal = (AngleMode == 2) ? (PI / sampleCount) : (TWO_PI / sampleCount);
-
-        float randomValue = frac(sin(dot(uv, float2(12.9898, 78.233))) * 43758.5453);
-        float jitterFactor = 1.0 + SampleJitter * (randomValue * 2.0 - 1.0);
-        float dynamicSampleRadius = SampleRadius * jitterFactor;
 
         if (AngleMode == 3) // Bidirectional
         {
@@ -391,7 +377,7 @@ namespace NEOSPACEGI
             {
                 float phi = (i + 0.5) * stepPhiLocal;
                 float3 sampleDir = tangent * cos(phi) + bitangent * sin(phi);
-                giColor += RayMarching(uv, sampleDir * dynamicSampleRadius, normal);
+                giColor += RayMarching(uv, sampleDir * SampleRadius, normal);
             }
         }
         else
@@ -416,7 +402,7 @@ namespace NEOSPACEGI
                         break;
                 }
 
-                giColor += RayMarching(uv, sampleDir * dynamicSampleRadius, normal);
+                giColor += RayMarching(uv, sampleDir * SampleRadius, normal);
             }
         }
 
@@ -424,7 +410,7 @@ namespace NEOSPACEGI
         float fadeFactor = max(FadeEnd - FadeStart, 0.001);
         float fade = saturate((FadeEnd - depthValue) / fadeFactor);
         giColor *= fade;
-    
+        
         giColor = ApplyGammaCorrection(giColor, colorSpace);
 
         return float4(giColor, 1.0);
