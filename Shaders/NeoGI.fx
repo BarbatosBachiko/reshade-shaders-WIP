@@ -4,7 +4,7 @@
 
     NeoGI
 
-    Version 1.2.2
+    Version 1.2.3
     Author: Barbatos Bachiko
     License: MIT
 
@@ -13,9 +13,8 @@
     History:
     (*) Feature (+) Improvement	(x) Bugfix (-) Information (!) Compatibility
 
-    Version 1.2.2
-    - Add jitter once again
-    + Fix "BColor" color space
+    Version 1.2.3
+    + Ray Marching
 */
 #include "ReShade.fxh"
 namespace NEOSPACEG
@@ -322,14 +321,12 @@ namespace NEOSPACEG
         float stepSize = ReShade::PixelSize.x / RayScale;
         int numSteps = max(int(MaxRayDistance / stepSize), 2);
         float invNumSteps = rcp(float(numSteps - 1));
+        float depthEpsilon = rcp(DepthSmoothEpsilon + 1e-6);
 
         float3 lightDir = normalize(LightDirection);
         float3 lightColor = LightColor;
-        float baseLambertian = max(dot(normal, lightDir), 0.0);
 
-        bool hitDetected = false;
-
-    [loop]
+        [loop]
         for (int i = 0; i < numSteps; i++)
         {
             float t = float(i) * invNumSteps;
@@ -337,22 +334,18 @@ namespace NEOSPACEG
             float2 sampleCoord = mad(rayDir.xy, sampleDistance, texcoord);
             sampleCoord = clamp(sampleCoord, 0.0, 1.0);
 
-            if (any(sampleCoord < 0.0) || any(sampleCoord > 1.0))
-                break;
-
             float sampleDepth = GetLinearDepth(sampleCoord);
             float depthDiff = depthValue - sampleDepth;
-            float hitFactor = saturate(depthDiff * rcp(DepthSmoothEpsilon + 1e-6));
+            float hitFactor = saturate(depthDiff * depthEpsilon);
 
             if (hitFactor > 0.01)
             {
-                float weight = 1.0;
                 float4 sampleData = tex2Dlod(ReShade::BackBuffer, float4(sampleCoord, 0, 0));
-                float3 sampleColor = sampleData.rgb;
-                sampleColor = ApplyGammaCorrection(sampleColor, colorSpace);
+                float3 sampleColor = ApplyGammaCorrection(sampleData.rgb, colorSpace);
                 float3 sampleNormal = GetScreenSpaceNormal(sampleCoord);
                 float lambertian = max(dot(sampleNormal, lightDir), 0.0);
-                giAccum = mad(sampleColor * weight * lambertian * lightColor, hitFactor, giAccum);
+            
+                giAccum += sampleColor * lambertian * lightColor * hitFactor;
 
                 if (hitFactor < 0.001)
                     break;
