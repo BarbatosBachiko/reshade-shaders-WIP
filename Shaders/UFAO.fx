@@ -2,330 +2,383 @@
 | :: Description :: |
 '-------------------/
 
-    Ultra Fast Ambient Occlusion (UFAO)
+ Ultra Fast Ambient Occlusion (UFAO) 
 
-    Version 1.3
+    Version 1.0 (Remake)
     Author: Barbatos Bachiko
     License: MIT
-
+    
     About: the only goal is to get maximum performance with ambient occlusion.
     History:
     (*) Feature (+) Improvement	(x) Bugfix (-) Information (!) Compatibility
 
-    Version 1.3
-    + Add Blur filter
-
+    Version 1.0
+    * Temporal Filtering
+    * Brightness Threshold and Fade
+    * Adjustable Sample Count, Radius and Angle Mode
+    * NeoSSAO AO Algorithm
 */
 
 namespace UFAO
 {
-#ifndef RENDER_SCALE
-#define RENDER_SCALE 1.0
-#endif
-#define INPUT_WIDTH BUFFER_WIDTH
-#define INPUT_HEIGHT BUFFER_HEIGHT
-#define RENDER_WIDTH (INPUT_WIDTH * RENDER_SCALE)
-#define RENDER_HEIGHT (INPUT_HEIGHT * RENDER_SCALE)
+    #define INPUT_WIDTH BUFFER_WIDTH 
+    #define INPUT_HEIGHT BUFFER_HEIGHT 
 
-#include "ReShade.fxh"
-#include "ReShadeUI.fxh"
+    #ifndef RES_SCALE
+    #define RES_SCALE 0.7
+    #endif
+    #define RES_WIDTH (INPUT_WIDTH * RES_SCALE)
+    #define RES_HEIGHT (INPUT_HEIGHT * RES_SCALE) 
 
-/*---------------.
-| :: Settings :: |
-'---------------*/
+    /*-------------------.
+    | :: Includes ::    |
+    '-------------------*/
+    #include "ReShade.fxh"
 
-    uniform int viewMode
+    /*-------------------.
+    | :: Settings ::    |
+    '-------------------*/
+    
+    uniform int ViewMode
     <
+        ui_category = "General";
         ui_type = "combo";
         ui_label = "View Mode";
-        ui_tooltip = "Select the view mode for SSAO";
+        ui_tooltip = "Select the view mode for AO";
         ui_items = "Normal\0AO Debug\0Depth\0Sky Debug\0Normal Debug\0";
-    > = 0;
+    >
+    = 0;
 
-    uniform float intensity
+    uniform int SampleCount
     <
+        ui_category = "General";
         ui_type = "slider";
-        ui_label = "Occlusion Intensity";
-        ui_tooltip = "Adjust the intensity of ambient occlusion";
-        ui_min = 0.0; ui_max = 1.0; ui_step = 0.05;
-    > = 0.1;
+        ui_label = "Sample Count";
+        ui_min = 1.0; ui_max = 4.0; ui_step = 1.0;
+    >
+    = 4;
 
-    uniform float radius
+    uniform float Intensity
     <
+        ui_category = "General";
         ui_type = "slider";
-        ui_label = "Radius";
-        ui_tooltip = "Radius for occlusion sampling";
-        ui_min = 0.003; ui_max = 0.01; ui_step = 0.001;
-    > = 0.005;
+        ui_label = "AO Intensity";
+        ui_min = 0.0; ui_max = 2.0; ui_step = 0.01;
+    >
+    = 0.7;
 
-    uniform float fDepthMultiplier
+    uniform float SampleRadius
     <
+        ui_category = "General";
         ui_type = "slider";
+        ui_label = "Sample Radius";
+        ui_min = 0.001; ui_max = 10.0; ui_step = 0.001;
+    >
+    = 5.0;
+
+    uniform int AngleMode
+    <
+        ui_category = "AO Kernel";
+        ui_type = "combo";
+        ui_label = "Angle Mode";
+        ui_items = "Horizon Only\0Vertical Only\0Unilateral\0Bidirectional\0";
+    >
+    = 3;
+
+    uniform float FadeStart
+    <
+        ui_category = "Fade";
+        ui_type = "slider";
+        ui_label = "Fade Start";
+        ui_tooltip = "Distance at which AO starts to fade out";
+        ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
+    >
+    = 0.0;
+
+    uniform float FadeEnd
+    <
+        ui_category = "Fade";
+        ui_type = "slider";
+        ui_label = "Fade End";
+        ui_tooltip = "Distance at which AO completely fades out";
+        ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
+    >
+    = 1.0;
+    
+    uniform float DepthMultiplier
+    <
         ui_category = "Depth";
-        ui_label = "Depth multiplier";
-        ui_min = 0.001; ui_max = 20.00;
-        ui_step = 0.001;
-    > = 1.0;
-
-    uniform float depthThreshold
-    <
         ui_type = "slider";
+        ui_label = "Depth Multiplier";
+        ui_min = 0.1; ui_max = 5.0; ui_step = 0.1;
+    >
+    = 0.5;
+
+    uniform float DepthSmoothEpsilon
+    <
         ui_category = "Depth";
+        ui_type = "slider";
+        ui_label = "Depth Smooth Epsilon";
+        ui_tooltip = "Controls the smoothing of depth comparison";
+        ui_min = 0.0001; ui_max = 0.01; ui_step = 0.0001;
+    >
+    = 0.0005;
+    
+    uniform float DepthThreshold
+    <
+        ui_category = "Depth";
+        ui_type = "slider";
         ui_label = "Depth Threshold (Sky)";
-        ui_tooltip = "Set the depth threshold to ignore the sky during occlusion.";
-        ui_min = 0.9; ui_max = 1.0; ui_step = 0.01;
-    > = 0.95;
-
-    uniform float BLURING_AMOUNT <
-	ui_type = "drag";
-	ui_min = 0.0; ui_max = 8.0;
-    ui_step = 0.1;
-    ui_label = "Bluring amount";
-	ui_tooltip = "Less noise but less details";
-    ui_category = "Filtering";
-> = 1.0;
+        ui_tooltip = "Set the depth threshold to ignore the sky";
+        ui_min = 0.0; ui_max = 1.0; ui_step = 0.001;
+    >
+    = 0.50; 
     
-    
-/*---------------.
-| :: Textures :: |
-'---------------*/
+    uniform bool EnableTemporal
+    <
+        ui_category = "Temporal";
+        ui_type = "checkbox";
+        ui_label = "Temporal Filtering";
+    >
+    = true;
 
-    texture AOTex
+    uniform float TemporalFilterStrength
+    <
+        ui_category = "Temporal";
+        ui_type = "slider";
+        ui_label = "Temporal Filter";
+        ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
+        ui_tooltip = "Blend factor between current AO and history";
+    >
+    = 0.25;
+
+    uniform bool EnableBrightnessThreshold
+    < 
+        ui_category = "Extra";
+        ui_type = "checkbox";
+        ui_label = "Enable Brightness Threshold"; 
+        ui_tooltip = "Enable or disable the brightness threshold";
+    > 
+    = false;
+
+    uniform float BrightnessThreshold
+    <
+        ui_category = "Extra";
+        ui_type = "slider";
+        ui_label = "Brightness Threshold";
+        ui_tooltip = "Pixels with brightness above this threshold will have reduced occlusion";
+        ui_min = 0.0; ui_max = 1.0; ui_step = 0.01;
+    >
+    = 0.8; 
+    
+    uniform float4 OcclusionColor
+    <
+        ui_category = "Extra";
+        ui_type = "color";
+        ui_label = "Occlusion Color";
+        ui_tooltip = "Color for ambient occlusion";
+    >
+    = float4(0.0, 0.0, 0.0, 1.0);
+    
+
+    /*---------------.
+    | :: Textures :: |
+    '---------------*/
+    texture2D AOTex
     {
-        Width = RENDER_WIDTH;
-        Height = RENDER_HEIGHT;
+        Width = RES_WIDTH;
+        Height = RES_HEIGHT;
         Format = RGBA8;
     };
+
+    texture2D ufaoTemporal
+    {
+        Width = RES_WIDTH;
+        Height = RES_HEIGHT;
+        Format = RGBA8;
+    };
+
+    texture2D ufaoHistory
+    {
+        Width = RES_WIDTH;
+        Height = RES_HEIGHT;
+        Format = RGBA8;
+    };
+
     sampler2D sAO
     {
         Texture = AOTex;
-    };
-    
-    texture2D NormalTex
-    {
-        Width = BUFFER_WIDTH;
-        Height = BUFFER_HEIGHT;
-        Format = RGBA16F;
-    };
-    
-    texture fBlurTexture0
-    {
-        Width = BUFFER_WIDTH;
-        Height = BUFFER_HEIGHT;
-        Format = RGBA16F;
-    };
-    sampler blurTexture0
-    {
-        Texture = fBlurTexture0;
-    };
-    
-    texture fBlurTexture1
-    {
-        Width = BUFFER_WIDTH;
-        Height = BUFFER_HEIGHT;
-        Format = RGBA16F;
-    };
-    sampler blurTexture1
-    {
-        Texture = fBlurTexture1;
+        SRGBTexture = false;
     };
 
-    texture fBlurTexture2
+    sampler2D sTemporal
     {
-        Width = BUFFER_WIDTH;
-        Height = BUFFER_HEIGHT;
-        Format = RGBA16F;
-    };
-    sampler blurTexture2
-    {
-        Texture = fBlurTexture2;
+        Texture = ufaoTemporal;
+        SRGBTexture = false;
     };
 
+    sampler2D sAOHistory
+    {
+        Texture = ufaoHistory;
+        SRGBTexture = false;
+    };
+    
     /*----------------.
-    | :: Funções ::  |
+    | :: Functions :: |
     '----------------*/
 
-    float GetLinearDepth(float2 coords)
+    float GetLinearDepth(in float2 coords)
     {
-        return ReShade::GetLinearizedDepth(coords) * fDepthMultiplier;
+        return ReShade::GetLinearizedDepth(coords) * DepthMultiplier;
     }
-    
-    float3 GetNormalFromDepth(float2 texcoord)
+
+    float3 GetScreenSpaceNormal(in float2 texcoord)
     {
         float3 offset = float3(BUFFER_PIXEL_SIZE, 0.0);
-        float2 posCenter = texcoord.xy;
+        float2 posCenter = texcoord;
         float2 posNorth = posCenter - offset.zy;
         float2 posEast = posCenter + offset.xz;
 
-        float3 vertCenter = float3(posCenter - 0.5, 1.0) * GetLinearDepth(posCenter);
-        float3 vertNorth = float3(posNorth - 0.5, 1.0) * GetLinearDepth(posNorth);
-        float3 vertEast = float3(posEast - 0.5, 1.0) * GetLinearDepth(posEast);
+        float depthCenter = GetLinearDepth(posCenter);
+        float depthNorth = GetLinearDepth(posNorth);
+        float depthEast = GetLinearDepth(posEast);
+
+        float3 vertCenter = float3(posCenter - 0.5, 1) * depthCenter;
+        float3 vertNorth = float3(posNorth - 0.5, 1) * depthNorth;
+        float3 vertEast = float3(posEast - 0.5, 1) * depthEast;
 
         return normalize(cross(vertCenter - vertNorth, vertCenter - vertEast)) * 0.5 + 0.5;
     }
     
-    float3 FixedDirection(int sampleIndex)
+    float CalculateBrightness(float3 color)
     {
-        if (sampleIndex == 0)
-            return float3(1.0, 0.0, 0.0); // Right
-        if (sampleIndex == 1)
-            return float3(-1.0, 0.0, 0.0); // Left
-        if (sampleIndex == 2)
-            return float3(0.0, 1.0, 0.0); // Up
-        return float3(0.0, -1.0, 0.0); // Down
+        return dot(color.rgb, float3(0.2126, 0.7152, 0.0722));
     }
-
-    float SAO(float2 texcoord)
+    
+    float PS_UFAO_Main(in float2 uv)
     {
-        float depthValue = GetLinearDepth(texcoord);
-        if (depthValue > depthThreshold)
-        {
-            return 0.0;
-        }
-
+        float currentDepth = GetLinearDepth(uv);
         float occlusion = 0.0;
-        float2 sampleCoords[4];
-        float3 normal = GetNormalFromDepth(texcoord);
         
-        for (int i = 0; i < 4; i++)
+        // Gets the original color to apply the brightness threshold to
+        float3 originalColor = tex2D(ReShade::BackBuffer, uv).rgb;
+        float brightness = CalculateBrightness(originalColor);
+        float brightnessFactor = EnableBrightnessThreshold ? saturate(1.0 - smoothstep(BrightnessThreshold - 0.1, BrightnessThreshold + 0.1, brightness)) : 1.0;
+        
+        // Loop
+        for (int i = 0; i < SampleCount; i++)
         {
-            sampleCoords[i] = texcoord + FixedDirection(i).xy * radius;
+            float angle = 0.0;
+            if (AngleMode == 3) // Bidirectional: full circle sampling
+            {
+                angle = (i + 0.5) * 6.28318530718 / SampleCount;
+            }
+            else if (AngleMode == 0) // Horizon Only: samples in opposite directions horizontally
+            {
+                angle = (i % 2 == 0) ? 0.0 : 3.14159265359;
+            }
+            else if (AngleMode == 1) // Vertical Only: samples up and down
+            {
+                angle = (i % 2 == 0) ? 1.570796327 : 4.71238898;
+            }
+            else // Unilateral: sample in semicircle
+            {
+                angle = (i + 0.5) * 3.14159265359 / SampleCount;
+            }
+            float2 offset = float2(cos(angle), sin(angle)) * SampleRadius * ReShade::PixelSize.x;
+            float neighborDepth = GetLinearDepth(uv + offset);
+            float depthDiff = currentDepth - neighborDepth;
+            float hit = saturate(depthDiff * (1.0 / (DepthSmoothEpsilon + 1e-6)));
+            occlusion += hit;
         }
-
-        for (int i = 0; i < 4; i++)
-        {
-            float sampleDepth = GetLinearDepth(sampleCoords[i]);
-            float3 sampleNormal = GetNormalFromDepth(sampleCoords[i]);
-            float weight = dot(normal, sampleNormal);
-            occlusion += ((sampleDepth < depthValue) && (weight > 0.5)) ? 1.0 : 0.0;
-        }
-
-        return occlusion * intensity;
+        occlusion = (occlusion / SampleCount) * Intensity;
+        occlusion *= brightnessFactor;
+        
+        // Fade
+        float fade = (currentDepth < FadeStart) ? 1.0 : saturate((FadeEnd - currentDepth) / (FadeEnd - FadeStart));
+        occlusion *= fade;
+        
+        return occlusion;
     }
-
-    float4 AO_PS(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
+    
+    float4 PS_UFAO(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
     {
-        float2 origTexcoord = texcoord * (1.0 / RENDER_SCALE);
-        float ao = SAO(origTexcoord);
+        float ao = PS_UFAO_Main(uv);
         return float4(ao, ao, ao, 1.0);
     }
     
-    float4 PS_Normals(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
+    float4 PS_Temporal(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
     {
-        float3 normal = GetNormalFromDepth(uv);
-        return float4(normal, 1.0);
+        float currentAO = tex2D(sAO, uv).r;
+        float historyAO = tex2D(sAOHistory, uv).r;
+        float ao = EnableTemporal ? lerp(currentAO, historyAO, TemporalFilterStrength) : currentAO;
+        return float4(ao, ao, ao, 1.0);
     }
 
-    float4 Composite_PS(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
+    float4 PS_SaveHistory(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
+    {
+        float ao = EnableTemporal ? tex2D(sTemporal, uv).r : tex2D(sAO, uv).r;
+        return float4(ao, ao, ao, 1.0);
+    }
+    
+    float4 PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
     {
         float4 originalColor = tex2D(ReShade::BackBuffer, uv);
-        float ao = tex2D(blurTexture2, uv * RENDER_SCALE).r;
-        float depthValue = GetLinearDepth(uv);
-        float3 normal = GetNormalFromDepth(uv);
-        
-        if (viewMode == 0)
+        float ao = EnableTemporal ? tex2D(sTemporal, uv).r : tex2D(sAO, uv).r;
+        float currentDepth = GetLinearDepth(uv);
+        float3 normal = GetScreenSpaceNormal(uv);
+
+        switch (ViewMode)
         {
-            return originalColor * (1.0 - ao);
-        }
-        else if (viewMode == 1)
-        {
-            return float4(ao, ao, ao, 1.0);
-        }
-        else if (viewMode == 2)
-        {
-            return float4(depthValue, depthValue, depthValue, 1.0);
-        }
-        else if (viewMode == 3)
-        {
-            return (depthValue >= depthThreshold)
-                ? float4(1.0, 0.0, 0.0, 1.0)
-                : float4(depthValue, depthValue, depthValue, 1.0);
-        }
-        else if (viewMode == 4)
-        {
-            return float4(normal * 0.5 + 0.5, 1.0);
+            case 0: // Normal
+                return (currentDepth >= DepthThreshold)
+                    ? originalColor
+                    : originalColor * (1.0 - saturate(ao)) + OcclusionColor * saturate(ao);
+            case 1: // AO Debug
+                return float4(1.0 - ao, 1.0 - ao, 1.0 - ao, 1.0);
+            case 2: // Depth
+                return float4(currentDepth, currentDepth, currentDepth, 1.0);
+            case 3: // Sky Debug
+                return (currentDepth >= DepthThreshold)
+                    ? float4(1.0, 0.0, 0.0, 1.0)
+                    : float4(currentDepth, currentDepth, currentDepth, 1.0);
+            case 4: // Normal Debug
+                return float4(normal * 0.5 + 0.5, 1.0);
         }
         return originalColor;
     }
 
-    // Downsampling Function - Phase 0
-    float4 Downsample0(float4 position : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
+    /*-------------------.
+    | :: Techniques ::   |
+    '-------------------*/
+    technique UltraFastAO
     {
-        float2 pixelSize = ReShade::PixelSize * BLURING_AMOUNT;
-        float4 color = tex2D(sAO, texcoord + float2(-pixelSize.x, -pixelSize.y));
-        color += tex2D(sAO, texcoord + float2(pixelSize.x, -pixelSize.y));
-        color += tex2D(sAO, texcoord + float2(-pixelSize.x, pixelSize.y));
-        color += tex2D(sAO, texcoord + float2(pixelSize.x, pixelSize.y));
-        color *= 0.25;
-        return color;
-    }
-
-// Downsampling Function - Phase 1
-    float4 Downsample1(float4 position : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
-    {
-        float2 pixelSize = ReShade::PixelSize * 2 * BLURING_AMOUNT;
-        float4 color = tex2D(blurTexture0, texcoord + float2(-pixelSize.x, -pixelSize.y));
-        color += tex2D(blurTexture0, texcoord + float2(pixelSize.x, -pixelSize.y));
-        color += tex2D(blurTexture0, texcoord + float2(-pixelSize.x, pixelSize.y));
-        color += tex2D(blurTexture0, texcoord + float2(pixelSize.x, pixelSize.y));
-        color *= 0.25;
-        return color;
-    }
-
-// Downsampling Function - Phase 2
-    float4 Downsample2(float4 position : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
-    {
-        float2 pixelSize = ReShade::PixelSize * 4 * BLURING_AMOUNT;
-        float4 color = tex2D(blurTexture1, texcoord + float2(-pixelSize.x, -pixelSize.y));
-        color += tex2D(blurTexture1, texcoord + float2(pixelSize.x, -pixelSize.y));
-        color += tex2D(blurTexture1, texcoord + float2(-pixelSize.x, pixelSize.y));
-        color += tex2D(blurTexture1, texcoord + float2(pixelSize.x, pixelSize.y));
-        color *= 0.25;
-        return color;
-    }
-    
-    /*-----------------.
-    | :: Técnicas ::  |
-    '-----------------*/
-
-    technique UFAO
-    {
-        pass Normal
+        pass AO
         {
             VertexShader = PostProcessVS;
-            PixelShader = PS_Normals;
-            RenderTarget = NormalTex;
-        }
-        pass AOPass
-        {
-            VertexShader = PostProcessVS;
-            PixelShader = AO_PS;
+            PixelShader = PS_UFAO;
             RenderTarget = AOTex;
+            ClearRenderTargets = true;
         }
-        pass
+        pass Temporal
         {
             VertexShader = PostProcessVS;
-            PixelShader = Downsample0;
-            RenderTarget0 = fBlurTexture0;
+            PixelShader = PS_Temporal;
+            RenderTarget = ufaoTemporal;
+            ClearRenderTargets = true;
         }
-
-        pass
+        pass SaveHistory
         {
             VertexShader = PostProcessVS;
-            PixelShader = Downsample1;
-            RenderTarget0 = fBlurTexture1;
-        }
-
-        pass
-        {
-            VertexShader = PostProcessVS;
-            PixelShader = Downsample2;
-            RenderTarget0 = fBlurTexture2;
+            PixelShader = PS_SaveHistory;
+            RenderTarget = ufaoHistory;
         }
         pass Composite
         {
             VertexShader = PostProcessVS;
-            PixelShader = Composite_PS;
+            PixelShader = PS_Composite;
+            SRGBWriteEnable = false;
+            BlendEnable = false;
         }
     }
 }
